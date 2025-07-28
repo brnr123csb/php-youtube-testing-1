@@ -180,7 +180,7 @@ $searchTerm = $_GET['search'] ?? '';
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>YouTube Search Scraper</title>
+<title>You tube</title>
 <style>
     body {
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -311,7 +311,7 @@ if ($searchTerm) {
 
     $clientName = 'WEB';
 $enable_parallel = true; // Set to false to disable parallel fetching
-$max_continuations = 10;
+$max_continuations = 5;
 $continuationTokens = [$continuationToken];
 $allVideos = [];
 
@@ -395,7 +395,7 @@ if ($enable_parallel) {
 
         $allVideos = array_merge($allVideos, parse_videos($contContents));
         $continuationToken = find_continuation_token($contContents);
-        usleep(200000);
+        usleep(200000); // shorter delay
     }
 }
 
@@ -411,6 +411,7 @@ foreach ($allVideos as $v) {
     echo '<div class="info">';
     echo '<a href="' . htmlspecialchars($v['url']) . '" target="_blank" rel="noopener noreferrer">' . htmlspecialchars($v['title']) . '</a>';
     echo '</div></div>';
+}
 }
 ?>
 <script>
