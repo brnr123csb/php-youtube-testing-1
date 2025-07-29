@@ -1,7 +1,6 @@
 <?php
 function fetchDescription($videoID) {
     $videoURL = "https://www.youtube.com/watch?v=" . $videoID;
-
     $html = @file_get_contents($videoURL);
     if (!$html) {
         return "Failed to load video page.";
@@ -19,11 +18,13 @@ function fetchDescription($videoID) {
 }
 
 $videoID = $_GET['videoID'] ?? null;
-
+$mode = $_GET['mode'] ?? 'local';
+$useLocal = $mode === 'local';
 $error = null;
 $description = null;
 $youtubeLink = null;
 $currentPageLink = null;
+$localPath = "videos/$videoID.mp4";
 
 if (!$videoID || !preg_match('/^[a-zA-Z0-9_-]{11}$/', $videoID)) {
     $error = "Invalid or missing video ID.";
@@ -31,6 +32,14 @@ if (!$videoID || !preg_match('/^[a-zA-Z0-9_-]{11}$/', $videoID)) {
     $description = fetchDescription($videoID);
     $youtubeLink = "https://www.youtube.com/watch?v=" . htmlspecialchars($videoID);
     $currentPageLink = "http://" . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+
+    if ($useLocal && !file_exists($localPath)) {
+        // Ensure the "videos" directory exists and is writable
+        @mkdir('videos', 0755, true);
+        $escapedID = escapeshellarg("https://www.youtube.com/watch?v=$videoID");
+        $command = "yt-dlp -f mp4 -o 'videos/$videoID.%(ext)s' $escapedID";
+        exec($command);
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -38,7 +47,7 @@ if (!$videoID || !preg_match('/^[a-zA-Z0-9_-]{11}$/', $videoID)) {
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>You tube</title>
+    <title>YouTube Viewer</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -47,7 +56,7 @@ if (!$videoID || !preg_match('/^[a-zA-Z0-9_-]{11}$/', $videoID)) {
             padding: 1rem;
             text-align: center;
         }
-        iframe {
+        iframe, video {
             margin-top: 2rem;
             width: 100%;
             height: 360px;
@@ -94,6 +103,7 @@ if (!$videoID || !preg_match('/^[a-zA-Z0-9_-]{11}$/', $videoID)) {
             border: none;
             border-radius: 6px;
             cursor: pointer;
+            text-decoration: none;
         }
         .copy-btn:hover {
             background: #005bb5;
@@ -101,7 +111,6 @@ if (!$videoID || !preg_match('/^[a-zA-Z0-9_-]{11}$/', $videoID)) {
         .copy-buttons {
             margin-top: 1.5rem;
         }
-
         #toast {
             visibility: hidden;
             min-width: 180px;
@@ -119,7 +128,6 @@ if (!$videoID || !preg_match('/^[a-zA-Z0-9_-]{11}$/', $videoID)) {
             opacity: 0;
             transition: opacity 0.3s ease, bottom 0.3s ease;
         }
-
         #toast.show {
             visibility: visible;
             opacity: 1;
@@ -133,14 +141,23 @@ if (!$videoID || !preg_match('/^[a-zA-Z0-9_-]{11}$/', $videoID)) {
     <?php if ($error): ?>
         <p class="error"><?= $error ?></p>
     <?php else: ?>
-        <iframe
-            src="https://www.youtube.com/embed/<?= htmlspecialchars($videoID) ?>"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowfullscreen
-            title="YouTube video player"
-        ></iframe>
+        <?php if ($useLocal && file_exists($localPath)): ?>
+            <video controls>
+                <source src="<?= $localPath ?>" type="video/mp4">
+                Your browser does not support the video tag.
+            </video>
+        <?php else: ?>
+            <iframe
+                src="https://www.youtube.com/embed/<?= htmlspecialchars($videoID) ?>"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowfullscreen
+                title="YouTube video player"
+            ></iframe>
+        <?php endif; ?>
 
         <div class="copy-buttons">
+            <a class="copy-btn" href="?videoID=<?= $videoID ?>&mode=local">View Local</a>
+            <a class="copy-btn" href="?videoID=<?= $videoID ?>&mode=embed">View Embed</a>
             <button class="copy-btn" onclick="copyText('<?= $youtubeLink ?>')">Copy YouTube Link</button>
             <button class="copy-btn" onclick="copyText('<?= $currentPageLink ?>')">Copy Page Link</button>
         </div>
@@ -150,8 +167,6 @@ if (!$videoID || !preg_match('/^[a-zA-Z0-9_-]{11}$/', $videoID)) {
             <p><?= $description ?></p>
         </div>
     <?php endif; ?>
-
-    <!-- <a href="javascript:window.history.back();" class="back">← Back to search results</a> -->
 
     <div id="toast">Copied to clipboard!</div>
 
