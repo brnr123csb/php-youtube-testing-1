@@ -180,79 +180,101 @@ $searchTerm = $_GET['search'] ?? '';
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>You tube</title>
+<title>Your tube</title>
 <style>
     body {
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        margin: 20px;
-        background: #f9f9f9;
-        color: #222;
-    }
-    form {
-        margin-bottom: 30px;
-    }
-    input[type=text] {
-        width: 320px;
-        padding: 8px;
-        font-size: 1rem;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-    }
-    button {
-        padding: 8px 16px;
-        font-size: 1rem;
-        cursor: pointer;
-        background-color: #cc0000;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        margin-left: 8px;
-        transition: background-color 0.3s ease;
-    }
-    button:hover {
-        background-color: #b30000;
-    }
-    #results {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 15px;
-    }
-    .video {
-        background: white;
-        border-radius: 6px;
-        box-shadow: 0 2px 6px rgb(0 0 0 / 0.1);
-        width: 320px;
-        padding: 10px;
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
-        transition: box-shadow 0.3s ease;
-    }
-    .video:hover {
-        box-shadow: 0 6px 12px rgb(0 0 0 / 0.15);
-    }
-    .thumbnail {
-        flex-shrink: 0;
-        width: 120px;
-        height: 67px;
-        background: #eee;
-        border-radius: 4px;
-        object-fit: cover;
-    }
-    .info {
-        flex-grow: 1;
-    }
-    .info a {
-        font-weight: 600;
-        color: #cc0000;
-        text-decoration: none;
-        font-size: 1rem;
-        line-height: 1.2;
-        display: block;
-    }
-    .info a:hover {
-        text-decoration: underline;
-    }
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 20px;
+    background: #121212;
+    color: #e0e0e0;
+}
+
+form {
+    margin-bottom: 30px;
+}
+
+input[type=text] {
+    width: 320px;
+    padding: 8px;
+    font-size: 1rem;
+    border: 1px solid #444;
+    border-radius: 6px;
+    background-color: #1e1e1e;
+    color: #f0f0f0;
+}
+
+input[type=text]::placeholder {
+    color: #aaa;
+}
+
+button {
+    padding: 8px 16px;
+    font-size: 1rem;
+    cursor: pointer;
+    background-color: #cc0000;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    margin-left: 8px;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+button:hover {
+    background-color: #b30000;
+    transform: translateY(-1px);
+}
+
+#results {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.video {
+    background: #1e1e1e;
+    border-radius: 10px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    width: 320px;
+    padding: 12px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    transition: box-shadow 0.3s ease;
+    border: 1px solid #2c2c2c;
+}
+
+.video:hover {
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.thumbnail {
+    flex-shrink: 0;
+    width: 120px;
+    height: 67px;
+    background: #333;
+    border-radius: 6px;
+    object-fit: cover;
+    box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+}
+
+.info {
+    flex-grow: 1;
+}
+
+.info a {
+    font-weight: 600;
+    color: #ff4d4d;
+    text-decoration: none;
+    font-size: 1rem;
+    line-height: 1.2;
+    display: block;
+    transition: color 0.3s ease;
+}
+
+.info a:hover {
+    text-decoration: underline;
+    color: #ff1a1a;
+}
 </style>
 </head>
 <body>
@@ -294,20 +316,41 @@ if ($searchTerm) {
     list($videos, $continuationToken) = extract_results_and_token($ytInitialDataJson);
 
     echo "<h2>Results for '" . htmlspecialchars($searchTerm) . "'</h2>";
-    echo '<div id="results">';
-    foreach ($videos as $v) {
-        $thumb = $v['thumbnail'] ?? '';
-        echo '<div class="video">';
-        if ($thumb) {
-            echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId']) . '" target="_blank" rel="noopener noreferrer">';
-            echo '<img src="' . htmlspecialchars($thumb) . '" alt="Thumbnail" class="thumbnail" loading="lazy" />';
-            echo '</a>';
-        }
-        echo '<div class="info">';
-        echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId']) . '" target="_blank" rel="noopener noreferrer">' . htmlspecialchars($v['title']) . '</a>';
-        echo '</div></div>';
+echo '<div id="results">';  // Open flex container once
+
+// Render initial batch of videos
+foreach ($videos as $v) {
+    $thumb = $v['thumbnail'] ?? '';
+    echo '<div class="video">';
+    if ($thumb) {
+        echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId']) . '" target="_blank" rel="noopener noreferrer">';
+        echo '<img src="' . htmlspecialchars($thumb) . '" alt="Thumbnail" class="thumbnail" loading="lazy" />';
+        echo '</a>';
     }
-    echo '</div>';
+    echo '<div class="info">';
+    echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId']) . '" target="_blank" rel="noopener noreferrer">' . htmlspecialchars($v['title']) . '</a>';
+    echo '</div></div>';
+}
+
+// Make sure $allVideos is an array before looping
+if (!isset($allVideos) || !is_array($allVideos)) {
+    $allVideos = [];
+}
+
+foreach ($allVideos as $v) {
+    $thumb = $v['thumbnail'] ?? '';
+    echo '<div class="video">';
+    if ($thumb) {
+        echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId'] ?? '') . '" target="_blank" rel="noopener noreferrer">';
+        echo '<img src="' . htmlspecialchars($thumb) . '" alt="Thumbnail" class="thumbnail" loading="lazy" />';
+        echo '</a>';
+    }
+    echo '<div class="info">';
+    echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId'] ?? '') . '" target="_blank" rel="noopener noreferrer">' . htmlspecialchars($v['title']) . '</a>';
+    echo '</div></div>';
+}
+
+echo '</div>';  // Close flex container once after all videos
 
     $clientName = 'WEB';
 $enable_parallel = true; // Set to false to disable parallel fetching
@@ -409,7 +452,7 @@ foreach ($allVideos as $v) {
         echo '</a>';
     }
     echo '<div class="info">';
-    echo '<a href="' . htmlspecialchars($v['url']) . '" target="_blank" rel="noopener noreferrer">' . htmlspecialchars($v['title']) . '</a>';
+    echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId'] ?? '') . '" target="_blank" rel="noopener noreferrer">' . htmlspecialchars($v['title']) . '</a>';
     echo '</div></div>';
 }
 }
