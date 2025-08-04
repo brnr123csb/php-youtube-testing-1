@@ -1,495 +1,152 @@
-<?php
-set_time_limit(0);
-
-function fetch_url($url, $post = null, $headers = []) {
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_USERAGENT, $headers['User-Agent'] ?? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' .
-        '(KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36');
-    curl_setopt($ch, CURLOPT_HEADER, false);
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    return [$response, $httpCode];
-}
-
-function random_user_agent() {
-    $versions = range(90, 115);
-    $version = $versions[array_rand($versions)];
-    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{$version}.0.0.0 Safari/537.36";
-}
-
-function extract_yt_initial_data($html) {
-    if (preg_match('/ytInitialData\s*=\s*({.+?});<\/script>/s', $html, $matches)) {
-        return $matches[1];
-    }
-    return null;
-}
-
-function extract_innertube_key($html) {
-    if (preg_match('/"INNERTUBE_API_KEY":"([^"]+)"/', $html, $matches)) {
-        return $matches[1];
-    }
-    return null;
-}
-
-function extract_client_version($html) {
-    if (preg_match('/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/', $html, $matches)) {
-        return $matches[1];
-    }
-    return null;
-}
-
-function parse_videos($items) {
-    $videos = [];
-    if (!is_array($items)) return $videos;
-
-    foreach ($items as $item) {
-        if (!is_array($item)) continue;
-
-        if (isset($item['videoRenderer'])) {
-            $vr = $item['videoRenderer'];
-            $videoId = $vr['videoId'] ?? null;
-            $titleRuns = $vr['title']['runs'] ?? [];
-            $title = '';
-            foreach ($titleRuns as $run) {
-                $title .= $run['text'] ?? '';
-            }
-            $url = $videoId ? "https://www.youtube.com/watch?v=$videoId" : null;
-
-            // Extract best thumbnail URL (pick the last highest res available)
-            $thumbnails = $vr['thumbnail']['thumbnails'] ?? [];
-            $thumbnailUrl = end($thumbnails)['url'] ?? null;
-
-            $videos[] = [
-                'title' => $title,
-                'url' => $url,
-                'thumbnail' => $thumbnailUrl,
-                'videoId' => $videoId
-            ];            
-        } elseif (isset($item['itemSectionRenderer'])) {
-            if (isset($item['itemSectionRenderer']['contents'])) {
-                $videos = array_merge($videos, parse_videos($item['itemSectionRenderer']['contents']));
-            }
-        } elseif (isset($item['richItemRenderer'])) {
-            $content = $item['richItemRenderer']['content'] ?? null;
-            if ($content && isset($content['videoRenderer'])) {
-                $vr = $content['videoRenderer'];
-                $videoId = $vr['videoId'] ?? null;
-                $titleRuns = $vr['title']['runs'] ?? [];
-                $title = '';
-                foreach ($titleRuns as $run) {
-                    $title .= $run['text'] ?? '';
-                }
-                $url = $videoId ? "https://www.youtube.com/watch?v=$videoId" : null;
-
-                $thumbnails = $vr['thumbnail']['thumbnails'] ?? [];
-                $thumbnailUrl = end($thumbnails)['url'] ?? null;
-
-                $videos[] = [
-                    'title' => $title,
-                    'url' => $url,
-                    'thumbnail' => $thumbnailUrl,
-                    'videoId' => $videoId
-                ];                
-            }
-        }
-    }
-    return $videos;
-}
-
-function find_continuation_token($items) {
-    if (!is_array($items)) return null;
-
-    foreach ($items as $item) {
-        if (isset($item['continuationItemRenderer'])) {
-            return $item['continuationItemRenderer']['continuationEndpoint']['continuationCommand']['token'] ?? null;
-        }
-        // Recursively dive into arrays
-        foreach ($item as $v) {
-            if (is_array($v)) {
-                $token = find_continuation_token([$v]);
-                if ($token) return $token;
-            }
-        }
-    }
-    return null;
-}
-
-function extract_results_and_token($ytInitialData) {
-    $results = [];
-    $token = null;
-    $jsonData = json_decode($ytInitialData, true);
-    if (!$jsonData) return [$results, $token];
-
-    $contents = $jsonData['contents']['twoColumnSearchResultsRenderer']['primaryContents']['sectionListRenderer']['contents'] ?? null;
-    if (!$contents) return [$results, $token];
-
-    $results = parse_videos($contents);
-    $token = find_continuation_token($contents);
-
-    return [$results, $token];
-}
-
-function fetch_continuation_results($innertubeKey, $continuationToken, $clientVersion, $clientName) {
-    $url = "https://www.youtube.com/youtubei/v1/search?key=" . urlencode($innertubeKey);
-
-    $payload = json_encode([
-        "context" => [
-            "client" => [
-                "clientName" => $clientName,
-                "clientVersion" => $clientVersion,
-            ]
-        ],
-        "continuation" => $continuationToken
-    ]);
-
-    $userAgent = random_user_agent();
-
-    $headers = [
-        "Content-Type: application/json",
-        "User-Agent: {$userAgent}",
-        "Accept-Language: en-US,en;q=0.9",
-    ];
-
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-    curl_setopt($ch, CURLOPT_USERAGENT, $userAgent);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    if ($httpCode >= 400) {
-        return [false, $httpCode];
-    }
-
-    return [$response, $httpCode];
-}
-
-$searchTerm = $_GET['search'] ?? '';
-
-?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Your tube</title>
-<style>
+  <meta charset="UTF-8">
+  <title>Your tube</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
     body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    margin: 20px;
-    background: #121212;
-    color: #e0e0e0;
-}
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 20px;
+      background: linear-gradient(135deg, #0f0f0f, #1a001a);
+      color: #f0eaff;
+    }
 
-form {
-    margin-bottom: 30px;
-}
+    h1 {
+      text-align: center;
+      font-size: 2em;
+      color: #f5e146;
+      text-shadow: 0 0 10px #f5e14680;
+    }
 
-input[type=text] {
-    width: 320px;
-    padding: 8px;
-    font-size: 1rem;
-    border: 1px solid #444;
-    border-radius: 6px;
-    background-color: #1e1e1e;
-    color: #f0f0f0;
-}
+    #searchForm {
+      text-align: center;
+      margin-bottom: 20px;
+    }
 
-input[type=text]::placeholder {
-    color: #aaa;
-}
+    #searchInput {
+      width: 80%;
+      max-width: 400px;
+      padding: 10px;
+      border: 2px solid #8a2be2;
+      border-radius: 8px;
+      background-color: #1c1c1c;
+      color: #fff;
+      outline: none;
+    }
 
-button {
-    padding: 8px 16px;
-    font-size: 1rem;
-    cursor: pointer;
-    background-color: #cc0000;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    margin-left: 8px;
-    transition: background-color 0.3s ease, transform 0.2s ease;
-}
+    #searchInput::placeholder {
+      color: #b19cd9;
+    }
 
-button:hover {
-    background-color: #b30000;
-    transform: translateY(-1px);
-}
+    button[type="submit"] {
+      padding: 10px 16px;
+      margin-left: 10px;
+      border: none;
+      border-radius: 8px;
+      background: #f5e146;
+      color: #000;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 0 10px #f5e14660;
+    }
 
-#results {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 15px;
-}
+    button[type="submit"]:hover {
+      background: #fffa80;
+    }
 
-.video {
-    background: #1e1e1e;
-    border-radius: 10px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-    width: 320px;
-    padding: 12px;
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    transition: box-shadow 0.3s ease;
-    border: 1px solid #2c2c2c;
-}
+    #results {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
+    }
 
-.video:hover {
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-}
+    .card {
+      background: #1c1c1c;
+      border: 1px solid #8a2be2;
+      border-radius: 8px;
+      padding: 10px;
+      box-shadow: 0 0 10px #8a2be260;
+      transition: transform 0.2s ease-in-out;
+    }
 
-.thumbnail {
-    flex-shrink: 0;
-    width: 120px;
-    height: 67px;
-    background: #333;
-    border-radius: 6px;
-    object-fit: cover;
-    box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
-}
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 0 20px #8a2be2a0;
+    }
 
-.info {
-    flex-grow: 1;
-}
+    .card img {
+      width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
 
-.info a {
-    font-weight: 600;
-    color: #ff4d4d;
-    text-decoration: none;
-    font-size: 1rem;
-    line-height: 1.2;
-    display: block;
-    transition: color 0.3s ease;
-}
+    .card h3 {
+      font-size: 1em;
+      margin: 8px 0;
+      color: #f0eaff;
+    }
 
-.info a:hover {
-    text-decoration: underline;
-    color: #ff1a1a;
-}
-</style>
+    .buttons {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .buttons a {
+      flex: 1;
+      text-align: center;
+      text-decoration: none;
+      padding: 6px;
+      background: #f5e146;
+      color: #000;
+      border-radius: 4px;
+      font-size: 0.9em;
+      font-weight: bold;
+      box-shadow: 0 0 6px #f5e14680;
+    }
+
+    .buttons a:hover {
+      background: #fff76a;
+    }
+
+    #loadMore {
+      display: block;
+      margin: 30px auto;
+      padding: 10px 20px;
+      background: #8a2be2;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      box-shadow: 0 0 10px #8a2be280;
+    }
+
+    #loadMore[disabled] {
+      background: #444;
+      cursor: default;
+      box-shadow: none;
+    }
+
+    #message {
+      text-align: center;
+      margin-top: 20px;
+      color: #ff4f4f;
+    }
+  </style>
 </head>
 <body>
-<h1>Search for Fun</h1>
-<form method="get" action="">
-    <input type="text" name="search" placeholder="Enter search term" value="<?=htmlspecialchars($searchTerm)?>" required />
+  <h1>Your Search</h1>
+  <form id="searchForm">
+    <input type="text" id="searchInput" placeholder="Enter search query" required>
     <button type="submit">Search</button>
-</form>
+  </form>
 
-<?php
-if ($searchTerm) {
-    $userAgent = random_user_agent();
-    $headers = [
-        "User-Agent: $userAgent",
-        "Accept-Language: en-US,en;q=0.9",
-    ];
+  <div id="results"></div>
+  <button id="loadMore" style="display:none;">Load More</button>
+  <div id="message"></div>
 
-    list($html, $httpCode) = fetch_url('https://www.youtube.com/results?search_query=' . urlencode($searchTerm), null, $headers);
-
-    if (!$html || $httpCode >= 400) {
-        echo '<p style="color:red; font-weight:bold;">Error: Failed to fetch YouTube search page. HTTP code: ' . $httpCode . '</p>';
-        exit;
-    }
-
-    $ytInitialDataJson = extract_yt_initial_data($html);
-    if (!$ytInitialDataJson) {
-        echo '<p style="color:red; font-weight:bold;">Error: Unable to extract ytInitialData from YouTube page.</p>';
-        exit;
-    }
-
-    $innertubeKey = extract_innertube_key($html);
-    $clientVersion = extract_client_version($html);
-
-    if (!$innertubeKey || !$clientVersion) {
-        echo '<p style="color:red; font-weight:bold;">Error: Unable to extract INNERTUBE_API_KEY or CLIENT_VERSION.</p>';
-        exit;
-    }
-
-    list($videos, $continuationToken) = extract_results_and_token($ytInitialDataJson);
-
-    echo "<h2>Results for '" . htmlspecialchars($searchTerm) . "'</h2>";
-echo '<div id="results">';  // Open flex container once
-
-// Render initial batch of videos
-foreach ($videos as $v) {
-    $thumb = $v['thumbnail'] ?? '';
-    echo '<div class="video">';
-    if ($thumb) {
-        echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId']) . '" target="_blank" rel="noopener noreferrer">';
-        echo '<img src="' . htmlspecialchars($thumb) . '" alt="Thumbnail" class="thumbnail" loading="lazy" />';
-        echo '</a>';
-    }
-    echo '<div class="info">';
-    echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId']) . '" target="_blank" rel="noopener noreferrer">' . htmlspecialchars($v['title']) . '</a>';
-    echo '</div></div>';
-}
-
-// Make sure $allVideos is an array before looping
-if (!isset($allVideos) || !is_array($allVideos)) {
-    $allVideos = [];
-}
-
-foreach ($allVideos as $v) {
-    $thumb = $v['thumbnail'] ?? '';
-    echo '<div class="video">';
-    if ($thumb) {
-        echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId'] ?? '') . '" target="_blank" rel="noopener noreferrer">';
-        echo '<img src="' . htmlspecialchars($thumb) . '" alt="Thumbnail" class="thumbnail" loading="lazy" />';
-        echo '</a>';
-    }
-    echo '<div class="info">';
-    echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId'] ?? '') . '" target="_blank" rel="noopener noreferrer">' . htmlspecialchars($v['title']) . '</a>';
-    echo '</div></div>';
-}
-
-echo '</div>';  // Close flex container once after all videos
-
-    $clientName = 'WEB';
-$enable_parallel = true; // Set to false to disable parallel fetching
-$max_continuations = 5;
-$continuationTokens = [$continuationToken];
-$allVideos = [];
-
-if ($enable_parallel) {
-    // Prepare multiple continuation tokens by walking through them linearly first
-    for ($i = 0; $i < $max_continuations; $i++) {
-        list($resp, $code) = fetch_continuation_results($innertubeKey, end($continuationTokens), $clientVersion, $clientName);
-        if (!$resp || $code >= 400) break;
-        $json = json_decode($resp, true);
-        $items = $json['onResponseReceivedCommands'][0]['appendContinuationItemsAction']['continuationItems']
-              ?? $json['onResponseReceivedActions'][0]['appendContinuationItemsAction']['continuationItems']
-              ?? $json['onResponseReceivedEndpoints'][0]['appendContinuationItemsAction']['continuationItems']
-              ?? null;
-        if (!$items) break;
-        $nextToken = find_continuation_token($items);
-        if ($nextToken) $continuationTokens[] = $nextToken;
-    }
-
-    // Fetch all continuation tokens in parallel
-    $multi = curl_multi_init();
-    $handles = [];
-    $results = [];
-
-    foreach ($continuationTokens as $token) {
-        $url = "https://www.youtube.com/youtubei/v1/search?key=" . urlencode($innertubeKey);
-        $payload = json_encode([
-            "context" => [
-                "client" => [
-                    "clientName" => $clientName,
-                    "clientVersion" => $clientVersion,
-                ]
-            ],
-            "continuation" => $token
-        ]);
-
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "Content-Type: application/json",
-            "User-Agent: " . random_user_agent(),
-            "Accept-Language: en-US,en;q=0.9",
-        ]);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_multi_add_handle($multi, $ch);
-        $handles[] = $ch;
-    }
-
-    do {
-        $status = curl_multi_exec($multi, $active);
-        curl_multi_select($multi);
-    } while ($active && $status == CURLM_OK);
-
-    foreach ($handles as $ch) {
-        $response = curl_multi_getcontent($ch);
-        curl_multi_remove_handle($multi, $ch);
-        curl_close($ch);
-
-        $data = json_decode($response, true);
-        $items = $data['onResponseReceivedCommands'][0]['appendContinuationItemsAction']['continuationItems']
-              ?? $data['onResponseReceivedActions'][0]['appendContinuationItemsAction']['continuationItems']
-              ?? $data['onResponseReceivedEndpoints'][0]['appendContinuationItemsAction']['continuationItems']
-              ?? null;
-        if ($items) {
-            $allVideos = array_merge($allVideos, parse_videos($items));
-        }
-    }
-    curl_multi_close($multi);
-} else {
-    for ($i = 0; $i < $max_continuations && $continuationToken; $i++) {
-        list($contJsonStr, $httpCode) = fetch_continuation_results($innertubeKey, $continuationToken, $clientVersion, $clientName);
-        if (!$contJsonStr || $httpCode >= 400) break;
-
-        $contJson = json_decode($contJsonStr, true);
-        $contContents = $contJson['onResponseReceivedCommands'][0]['appendContinuationItemsAction']['continuationItems']
-                      ?? $contJson['onResponseReceivedActions'][0]['appendContinuationItemsAction']['continuationItems']
-                      ?? $contJson['onResponseReceivedEndpoints'][0]['appendContinuationItemsAction']['continuationItems']
-                      ?? null;
-        if (!$contContents) break;
-
-        $allVideos = array_merge($allVideos, parse_videos($contContents));
-        $continuationToken = find_continuation_token($contContents);
-        usleep(200000); // shorter delay
-    }
-}
-
-// Render fetched videos from all continuation requests
-foreach ($allVideos as $v) {
-    $thumb = $v['thumbnail'] ?? '';
-    echo '<div class="video">';
-    if ($thumb) {
-        echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId'] ?? '') . '" target="_blank" rel="noopener noreferrer">';
-        echo '<img src="' . htmlspecialchars($thumb) . '" alt="Thumbnail" class="thumbnail" loading="lazy" />';
-        echo '</a>';
-    }
-    echo '<div class="info">';
-    echo '<a href="video_viewer.php?videoID=' . urlencode($v['videoId'] ?? '') . '" target="_blank" rel="noopener noreferrer">' . htmlspecialchars($v['title']) . '</a>';
-    echo '</div></div>';
-}
-}
-?>
-<script>
-document.addEventListener("DOMContentLoaded", () => {
-    const loadMore = document.createElement("button");
-    loadMore.textContent = "Load More";
-    loadMore.style.display = "block";
-    loadMore.style.margin = "30px auto";
-    loadMore.style.padding = "10px 20px";
-    loadMore.style.background = "#cc0000";
-    loadMore.style.color = "#fff";
-    loadMore.style.border = "none";
-    loadMore.style.borderRadius = "4px";
-    loadMore.style.cursor = "pointer";
-
-    let page = 1;
-
-    loadMore.addEventListener("click", () => {
-        loadMore.disabled = true;
-        loadMore.textContent = "Loading...";
-
-        fetch("load_more.php?search=" + encodeURIComponent("{$searchTerm}") + "&page=" + (++page))
-            .then(res => res.text())
-            .then(html => {
-                document.getElementById("results").insertAdjacentHTML("beforeend", html);
-                loadMore.disabled = false;
-                loadMore.textContent = "Load More";
-            })
-            .catch(err => {
-                loadMore.textContent = "Failed to load";
-            });
-    });
-
-    document.body.appendChild(loadMore);
-});
-</script>
+  <script src="/client/main.js"></script>
 </body>
 </html>
