@@ -6,3 +6,7 @@
 ## MINIUpdates
 - Local and embed view
 - copy and share link(s)
+
+### DOWNLOAD YT-DLP
+sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+sudo chmod a+rx /usr/local/bin/yt-dlp
