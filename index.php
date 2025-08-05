@@ -144,8 +144,11 @@
   </form>
 
   <div id="results"></div>
-  <button id="loadMore" style="display:none;">Load More</button>
-  <div id="message"></div>
+<div id="sentinel" style="height: 20px;"></div>
+<div id="loading" style="display: none; text-align: center; margin: 20px 0; color: #f5e146;">
+    Loading more videos...
+</div>
+<div id="message"></div>
 
   <script src="/client/main.js"></script>
 </body>
